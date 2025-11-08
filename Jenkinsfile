@@ -2,45 +2,49 @@ pipeline {
     agent any
 
     stages {
-        stage('Checkout Project') {
+        stage('Checkout Vulnerable Project') {
             steps {
-                git 'https://github.com/MR8anem/vulnerable-demo.git'
+                echo "Cloning vulnerable-demo from GitHub..."
+                git branch: 'main', url: 'https://github.com/MR8anem/vulnerable-demo.git'
+                
+                // Ensure reports directory exists
                 sh "mkdir -p reports"
             }
         }
 
-        stage('Static Security Scanning') {
-            agent { label 'agent-static' }
-            steps {
-                echo "--- Running Static Analysis on agent-static ---"
-                sh '''
-                    docker run --rm \
-                        -v $PWD:/app \
-                        -w /app \
-                        python:3.9-slim \
-                        bash -c "pip install bandit && bandit -r . -f json -o reports/bandit.json"
-                '''
-            }
-        }
+        stage('Run Analysis Agents') {
+            parallel {
+                stage('Static Analysis (agent-static)') {
+                    agent {
+                        docker { image 'python:3.9-slim' }
+                    }
+                    steps {
+                        echo "--- Running Bandit on agent-static ---"
+                        // Scripts are in security-scans repo, clone it first or call via Jenkins workspace
+                        sh "git clone https://github.com/MR8anem/security-scans.git ../security-scans-scripts"
+                        sh "chmod +x ../security-scans-scripts/run_bandit.sh"
+                        sh "../security-scans-scripts/run_bandit.sh"
+                    }
+                }
 
-        stage('Semgrep Security Scanning') {
-            agent { label 'agent-dynamic' }
-            steps {
-                echo "--- Running Semgrep Scan on agent-dynamic ---"
-                sh '''
-                    docker run --rm \
-                        -v $PWD:/app \
-                        -w /app \
-                        returntocorp/semgrep \
-                        semgrep --config auto --json > reports/semgrep.json
-                '''
+                stage('Dynamic Analysis (agent-dynamic)') {
+                    agent {
+                        docker { image 'python:3.9-slim' }
+                    }
+                    steps {
+                        echo "--- Running Semgrep on agent-dynamic ---"
+                        sh "git clone https://github.com/MR8anem/security-scans.git ../security-scans-scripts"
+                        sh "chmod +x ../security-scans-scripts/run_semgrep.sh"
+                        sh "../security-scans-scripts/run_semgrep.sh"
+                    }
+                }
             }
         }
     }
 
     post {
         always {
-            echo 'Archiving scan results...'
+            echo 'Archiving all reports...'
             archiveArtifacts artifacts: 'reports/*.json', allowEmptyArchive: true
             cleanWs()
         }
